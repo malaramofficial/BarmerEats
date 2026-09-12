@@ -26,6 +26,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.data.AuthState
+import com.example.data.UserEntity
 import com.example.ui.admin.AdminPanel
 import com.example.ui.components.*
 import com.example.ui.customer.CustomerApp
@@ -58,112 +60,139 @@ fun MainOrchestrator() {
 
     val currentRole by viewModel.currentRole.collectAsState()
     val notifications by viewModel.notifications.collectAsState()
+    val authState by viewModel.authState.collectAsState()
 
     var showNotificationsSheet by remember { mutableStateOf(false) }
+    var logoClickCount by remember { mutableStateOf(0) }
+    var showDeveloperTools by remember { mutableStateOf(false) }
 
-    Scaffold(
-        topBar = {
-            Column(
-                modifier = Modifier
-                    .background(DeepCrimson)
-                    .statusBarsPadding()
-            ) {
-                // Main Header Row
-                Row(
+    if (authState !is AuthState.Authenticated) {
+        LoginScreen(viewModel)
+    } else {
+        Scaffold(
+            topBar = {
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .background(DeepCrimson)
+                        .statusBarsPadding()
                 ) {
+                    // Main Header Row
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(SandyGold),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Moped, "Logo", tint = DeepCrimson)
-                        }
-                        Column {
-                            Text(
-                                "Barmer Food Hub",
-                                color = SandyGold,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                "Thar Delivery Network",
-                                color = SandyGold.copy(alpha = 0.7f),
-                                fontSize = 11.sp
-                            )
-                        }
-                    }
-
-                    // Notification Bell Icon with Badge
-                    IconButton(
-                        onClick = { showNotificationsSheet = true },
-                        modifier = Modifier.testTag("notification_bell")
-                    ) {
-                        BadgedBox(badge = {
-                            if (notifications.isNotEmpty()) {
-                                Badge(containerColor = DesertOrange) {
-                                    Text(notifications.size.toString(), color = Color.White)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.clickable {
+                                logoClickCount++
+                                if (logoClickCount >= 5) {
+                                    showDeveloperTools = !showDeveloperTools
+                                    logoClickCount = 0
                                 }
                             }
-                        }) {
-                            Icon(
-                                Icons.Default.Notifications,
-                                "Notifications",
-                                tint = SandyGold
-                            )
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(SandyGold),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Moped, "Logo", tint = DeepCrimson)
+                            }
+                            Column {
+                                Text(
+                                    "BarmerEats",
+                                    color = SandyGold,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    "Local Food. Local Delivery.",
+                                    color = SandyGold.copy(alpha = 0.7f),
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            IconButton(
+                                onClick = { viewModel.logoutUser() },
+                                modifier = Modifier.testTag("logout_button")
+                            ) {
+                                Icon(Icons.Default.ExitToApp, "Sign Out", tint = SandyGold)
+                            }
+
+                            // Notification Bell Icon with Badge
+                            IconButton(
+                                onClick = { showNotificationsSheet = true },
+                                modifier = Modifier.testTag("notification_bell")
+                            ) {
+                                BadgedBox(badge = {
+                                    if (notifications.isNotEmpty()) {
+                                        Badge(containerColor = DesertOrange) {
+                                            Text(notifications.size.toString(), color = Color.White)
+                                        }
+                                    }
+                                }) {
+                                    Icon(
+                                        Icons.Default.Notifications,
+                                        "Notifications",
+                                        tint = SandyGold
+                                    )
+                                }
+                            }
                         }
                     }
-                }
 
-                // Horizontal Role Selector Bar
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
-                        .padding(4.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    val roles = listOf("CUSTOMER" to "Customer", "RESTAURANT" to "Kitchen", "RIDER" to "Rider", "ADMIN" to "Admin")
-                    roles.forEach { (code, label) ->
-                        val isSelected = currentRole == code
-                        Box(
+                    // Horizontal Role Selector Bar (DEBUG/DEV only - activated after 5 logo taps)
+                    if (showDeveloperTools) {
+                        Row(
                             modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (isSelected) SandyGold else Color.Transparent)
-                                .clickable { viewModel.switchRole(code) }
-                                .padding(vertical = 8.dp)
-                                .testTag("role_tab_$code"),
-                            contentAlignment = Alignment.Center
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                                .background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                .padding(4.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
-                            Text(
-                                text = label,
-                                color = if (isSelected) DeepCrimson else SandyGold.copy(alpha = 0.8f),
-                                fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                            )
+                            val roles = listOf("CUSTOMER" to "Customer", "RESTAURANT" to "Kitchen", "RIDER" to "Rider", "ADMIN" to "Admin")
+                            roles.forEach { (code, label) ->
+                                val isSelected = currentRole == code
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (isSelected) SandyGold else Color.Transparent)
+                                        .clickable { viewModel.switchRole(code) }
+                                        .padding(vertical = 8.dp)
+                                        .testTag("role_tab_$code"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = label,
+                                        color = if (isSelected) DeepCrimson else SandyGold.copy(alpha = 0.8f),
+                                        fontSize = 12.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
-        }
-    ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(top = padding.calculateTopPadding())
-        ) {
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = padding.calculateTopPadding())
+            ) {
             when (currentRole) {
                 "CUSTOMER" -> CustomerApp(viewModel)
                 "RESTAURANT" -> RestaurantPanel(viewModel)
@@ -244,4 +273,5 @@ fun MainOrchestrator() {
             }
         }
     }
+}
 }

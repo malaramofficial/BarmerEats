@@ -15,6 +15,15 @@ class FoodDeliveryViewModel(application: Application) : AndroidViewModel(applica
 
     private val database = AppDatabase.getDatabase(application)
     private val repository = FoodDeliveryRepository(database.foodDeliveryDao())
+    
+    // --- AUTHENTICATION & SECURE INFRASTRUCTURE ---
+    private val authRepository = AuthRepository(application, database.foodDeliveryDao())
+    val isFirebaseConfigured: StateFlow<Boolean> = authRepository.isFirebaseConfigured
+
+    private val locationTracker = LocationTracker(application)
+
+    private val _authState = MutableStateFlow<AuthState>(AuthState.LoggedOut)
+    val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
     // --- APP CONTROLS & NAVIGATION STATE ---
     private val _currentRole = MutableStateFlow("CUSTOMER") // CUSTOMER, RESTAURANT, RIDER, ADMIN
@@ -71,12 +80,16 @@ class FoodDeliveryViewModel(application: Application) : AndroidViewModel(applica
     val cartItems: StateFlow<Map<MenuItemEntity, Int>> = _cartItems.asStateFlow()
 
     // Saved Addresses
-    val savedAddresses: StateFlow<List<AddressEntity>> = repository.getAddressesForCustomer("user_barmer")
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val savedAddresses: StateFlow<List<AddressEntity>> = _authState.flatMapLatest { state ->
+        val uid = (state as? AuthState.Authenticated)?.user?.id ?: "user_barmer"
+        repository.getAddressesForCustomer(uid)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Active User
-    val currentUser: StateFlow<UserEntity?> = repository.getUserById("user_barmer")
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    // Active User Flow
+    val currentUser: StateFlow<UserEntity?> = _authState.flatMapLatest { state ->
+        val uid = (state as? AuthState.Authenticated)?.user?.id ?: "user_barmer"
+        repository.getUserById(uid)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     // Current active restaurant owner / rider (using ID = 1 for simple single-device multi-role demo)
     val currentRider: StateFlow<RiderEntity?> = repository.getRiderById(1)
@@ -86,8 +99,10 @@ class FoodDeliveryViewModel(application: Application) : AndroidViewModel(applica
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     // Notifications Flow
-    val notifications: StateFlow<List<NotificationEntity>> = repository.getNotificationsForUser("user_barmer")
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val notifications: StateFlow<List<NotificationEntity>> = _authState.flatMapLatest { state ->
+        val uid = (state as? AuthState.Authenticated)?.user?.id ?: "user_barmer"
+        repository.getNotificationsForUser(uid)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
         // Seed initial data if database is empty
@@ -98,6 +113,40 @@ class FoodDeliveryViewModel(application: Application) : AndroidViewModel(applica
                 }
             }
         }
+    }
+
+    // --- AUTHENTICATION ACTIONS ---
+    fun signInUser(email: String, name: String = "", role: String = "CUSTOMER") {
+        viewModelScope.launch {
+            _authState.value = AuthState.Loading
+            val result = authRepository.signIn(email, "BarmerEatsPass123!")
+            if (result is AuthResult.Success) {
+                _authState.value = AuthState.Authenticated(result.user)
+                _currentRole.value = result.user.role
+            } else if (result is AuthResult.Error) {
+                _authState.value = AuthState.Error(result.message)
+            }
+        }
+    }
+
+    fun signUpUser(email: String, name: String, phone: String, role: String) {
+        viewModelScope.launch {
+            _authState.value = AuthState.Loading
+            val result = authRepository.signUp(email, name, phone, role)
+            if (result is AuthResult.Success) {
+                _authState.value = AuthState.Authenticated(result.user)
+                _currentRole.value = result.user.role
+            } else if (result is AuthResult.Error) {
+                _authState.value = AuthState.Error(result.message)
+            }
+        }
+    }
+
+    fun logoutUser() {
+        authRepository.signOut()
+        _authState.value = AuthState.LoggedOut
+        _currentRole.value = "CUSTOMER"
+        _customerScreen.value = "HOME"
     }
 
     // --- ROLE SWAPPING ---
@@ -165,9 +214,13 @@ class FoodDeliveryViewModel(application: Application) : AndroidViewModel(applica
             val totalAmount = cart.entries.sumOf { it.key.price * it.value } + 40.0 // 40 is standard delivery
             val rest = _selectedRestaurant.value ?: return@launch
 
+            val activeUser = (_authState.value as? AuthState.Authenticated)?.user
+            val customerId = activeUser?.id ?: "user_barmer"
+            val customerName = activeUser?.name ?: "Malaram Choudhary"
+
             val order = OrderEntity(
-                customerId = "user_barmer",
-                customerName = "Malaram Choudhary",
+                customerId = customerId,
+                customerName = customerName,
                 restaurantId = rest.id,
                 restaurantName = rest.name,
                 status = "PLACED",
@@ -196,7 +249,7 @@ class FoodDeliveryViewModel(application: Application) : AndroidViewModel(applica
             // Create notification for customer
             repository.insertNotification(
                 NotificationEntity(
-                    userId = "user_barmer",
+                    userId = customerId,
                     title = "Order Placed! 🍛",
                     message = "Your order with ${rest.name} has been placed successfully."
                 )
@@ -381,12 +434,17 @@ class FoodDeliveryViewModel(application: Application) : AndroidViewModel(applica
         }
     }
 
+    fun getActiveUserId(): String {
+        return (_authState.value as? AuthState.Authenticated)?.user?.id ?: "user_barmer"
+    }
+
     // Update Customer Profile
     fun updateCustomerProfile(name: String, email: String, phone: String) {
         viewModelScope.launch {
+            val uid = getActiveUserId()
             repository.insertUser(
                 UserEntity(
-                    id = "user_barmer",
+                    id = uid,
                     name = name,
                     email = email,
                     phone = phone,

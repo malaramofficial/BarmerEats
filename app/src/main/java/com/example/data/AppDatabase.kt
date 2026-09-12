@@ -34,7 +34,6 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "barmer_food_delivery_db"
                 )
-                .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance
                 instance
