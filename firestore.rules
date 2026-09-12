@@ -8,14 +8,10 @@ service cloud.firestore {
     function role(r) { return signedIn() && userDoc().data.role == r; }
 
     match /users/{userId} {
-      // A user can read only their own profile. Admins can read all profiles.
       allow read: if self(userId) || admin();
-      // Public registration can only create a CUSTOMER profile for the authenticated UID.
       allow create: if self(userId)
                     && request.resource.data.role == 'CUSTOMER'
                     && request.resource.data.id == request.auth.uid;
-      // Users cannot change identity, UID, or role. Admins may update profiles but may not
-      // accidentally remove the role field.
       allow update: if admin() || (
         self(userId)
         && request.resource.data.id == resource.data.id
@@ -27,11 +23,18 @@ service cloud.firestore {
     match /restaurants/{restaurantId} {
       allow read: if true;
       allow create: if admin();
-      allow update, delete: if admin() || (role('RESTAURANT') && resource.data.ownerId == request.auth.uid && request.resource.data.ownerId == resource.data.ownerId);
+      allow update, delete: if admin() || (
+        role('RESTAURANT')
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId
+      );
 
-      match /menu/{itemId} {
+      match /menuItems/{itemId} {
         allow read: if true;
-        allow create, update, delete: if admin() || (role('RESTAURANT') && get(/databases/$(database)/documents/restaurants/$(restaurantId)).data.ownerId == request.auth.uid);
+        allow create, update, delete: if admin() || (
+          role('RESTAURANT')
+          && get(/databases/$(database)/documents/restaurants/$(restaurantId)).data.ownerId == request.auth.uid
+        );
       }
     }
 
@@ -43,47 +46,45 @@ service cloud.firestore {
     }
 
     match /orders/{orderId} {
-      allow read: if admin()
-        || (signedIn() && (
-          resource.data.customerId == request.auth.uid
-          || resource.data.restaurantOwnerId == request.auth.uid
-          || resource.data.riderId == request.auth.uid
-        ));
+      allow read: if admin() || (signedIn() && (
+        resource.data.customerId == request.auth.uid
+        || resource.data.restaurantOwnerId == request.auth.uid
+        || resource.data.riderId == request.auth.uid
+      ));
 
       allow create: if signedIn()
         && request.resource.data.customerId == request.auth.uid
         && request.resource.data.status == 'PLACED'
         && request.resource.data.paymentStatus == 'PENDING'
-        && request.resource.data.totalAmount >= 0;
+        && request.resource.data.totalAmount >= 0
+        && request.resource.data.restaurantOwnerId is string;
 
-      // Sensitive ownership/payment/amount fields are immutable from the client.
-      allow update: if admin()
-        || (
-          signedIn()
-          && request.resource.data.customerId == resource.data.customerId
-          && request.resource.data.restaurantOwnerId == resource.data.restaurantOwnerId
-          && request.resource.data.totalAmount == resource.data.totalAmount
-          && request.resource.data.paymentStatus == resource.data.paymentStatus
-          && (
-            (resource.data.customerId == request.auth.uid
-              && resource.data.status == 'PLACED'
-              && request.resource.data.status == 'CANCELLED')
-            ||
-            (resource.data.restaurantOwnerId == request.auth.uid && (
-              (resource.data.status == 'PLACED' && request.resource.data.status == 'RESTAURANT_ACCEPTED')
-              || (resource.data.status == 'RESTAURANT_ACCEPTED' && request.resource.data.status == 'PREPARING')
-              || (resource.data.status == 'PREPARING' && request.resource.data.status == 'READY_FOR_PICKUP')
-              || (resource.data.status == 'PLACED' && request.resource.data.status == 'REJECTED')
-            ))
-            ||
-            (resource.data.riderId == request.auth.uid && (
-              (resource.data.status == 'READY_FOR_PICKUP' && request.resource.data.status == 'RIDER_ASSIGNED')
-              || (resource.data.status == 'RIDER_ASSIGNED' && request.resource.data.status == 'RIDER_PICKED_UP')
-              || (resource.data.status == 'RIDER_PICKED_UP' && request.resource.data.status == 'OUT_FOR_DELIVERY')
-              || (resource.data.status == 'OUT_FOR_DELIVERY' && request.resource.data.status == 'DELIVERED')
-            ))
-          )
-        );
+      allow update: if admin() || (
+        signedIn()
+        && request.resource.data.customerId == resource.data.customerId
+        && request.resource.data.restaurantOwnerId == resource.data.restaurantOwnerId
+        && request.resource.data.totalAmount == resource.data.totalAmount
+        && request.resource.data.paymentStatus == resource.data.paymentStatus
+        && (
+          (resource.data.customerId == request.auth.uid
+            && resource.data.status == 'PLACED'
+            && request.resource.data.status == 'CANCELLED')
+          ||
+          (resource.data.restaurantOwnerId == request.auth.uid && (
+            (resource.data.status == 'PLACED' && request.resource.data.status == 'ACCEPTED')
+            || (resource.data.status == 'ACCEPTED' && request.resource.data.status == 'PREPARING')
+            || (resource.data.status == 'PREPARING' && request.resource.data.status == 'READY')
+            || (resource.data.status == 'PLACED' && request.resource.data.status == 'REJECTED')
+          ))
+          ||
+          (resource.data.riderId == request.auth.uid && (
+            (resource.data.status == 'READY' && request.resource.data.status == 'RIDER_ASSIGNED')
+            || (resource.data.status == 'RIDER_ASSIGNED' && request.resource.data.status == 'PICKED_UP')
+            || (resource.data.status == 'PICKED_UP' && request.resource.data.status == 'OUT_FOR_DELIVERY')
+            || (resource.data.status == 'OUT_FOR_DELIVERY' && request.resource.data.status == 'DELIVERED')
+          ))
+        )
+      );
       allow delete: if admin();
     }
 
@@ -99,19 +100,18 @@ service cloud.firestore {
         || get(/databases/$(database)/documents/orders/$(orderId)).data.restaurantOwnerId == request.auth.uid
         || get(/databases/$(database)/documents/orders/$(orderId)).data.riderId == request.auth.uid
       ));
-      allow write: if signedIn() && get(/databases/$(database)/documents/orders/$(orderId)).data.riderId == request.auth.uid;
+      allow write: if signedIn()
+        && get(/databases/$(database)/documents/orders/$(orderId)).data.riderId == request.auth.uid;
     }
 
     match /notifications/{notificationId} {
       allow read: if admin() || (signedIn() && resource.data.userId == request.auth.uid);
-      // Clients cannot manufacture notifications for other users.
       allow create: if admin() || (signedIn() && request.resource.data.userId == request.auth.uid);
       allow update, delete: if admin() || (signedIn() && resource.data.userId == request.auth.uid);
     }
 
     match /payments/{paymentId} {
       allow read: if admin() || (signedIn() && resource.data.customerId == request.auth.uid);
-      // Payment records must be written by trusted backend/admin only.
       allow write: if admin();
     }
   }
