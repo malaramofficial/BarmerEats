@@ -35,7 +35,6 @@ fun LoginScreen(viewModel: FoodDeliveryViewModel) {
     var password by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
-    var role by remember { mutableStateOf("CUSTOMER") }
     var showPassword by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -54,7 +53,7 @@ fun LoginScreen(viewModel: FoodDeliveryViewModel) {
 
             Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = SandyGold.copy(alpha = .96f))) {
                 Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(if (signup) "Create Account" else "Secure Login", color = DeepCrimson, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text(if (signup) "Create Customer Account" else "Secure Login", color = DeepCrimson, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(16.dp))
 
                     if (signup) {
@@ -68,15 +67,6 @@ fun LoginScreen(viewModel: FoodDeliveryViewModel) {
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(password, { password = it }, label = { Text("Password") }, leadingIcon = { Icon(Icons.Default.Lock, null) }, visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
 
-                    if (signup) {
-                        Spacer(Modifier.height(12.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf("CUSTOMER" to "Customer", "RESTAURANT" to "Restaurant", "RIDER" to "Rider").forEach { (code, label) ->
-                                Button(onClick = { role = code }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = if (role == code) DeepCrimson else Color.Gray)) { Text(label, fontSize = 10.sp) }
-                            }
-                        }
-                    }
-
                     Spacer(Modifier.height(16.dp))
                     val shownError = error ?: (authState as? AuthState.Error)?.message
                     if (shownError != null) Text("⚠️ $shownError", color = Color.Red, fontSize = 12.sp)
@@ -89,7 +79,7 @@ fun LoginScreen(viewModel: FoodDeliveryViewModel) {
                                 password.length < 6 -> error = "Password must contain at least 6 characters."
                                 signup && name.isBlank() -> error = "Name is required."
                                 signup && phone.length < 10 -> error = "Enter a valid phone number."
-                                signup -> viewModel.signUpUser(email.trim(), password, name.trim(), phone.trim(), role)
+                                signup -> viewModel.signUpUser(email.trim(), password, name.trim(), phone.trim(), "CUSTOMER")
                                 else -> viewModel.signInUser(email.trim(), password)
                             }
                         },
@@ -98,7 +88,7 @@ fun LoginScreen(viewModel: FoodDeliveryViewModel) {
                     ) { Text(if (signup) "Create Account" else "Sign In", color = Color.White, fontWeight = FontWeight.Bold) }
 
                     Spacer(Modifier.height(12.dp))
-                    TextButton(onClick = { signup = !signup; error = null }) { Text(if (signup) "Already have an account? Sign in" else "Create a new account") }
+                    TextButton(onClick = { signup = !signup; error = null }) { Text(if (signup) "Already have an account? Sign in" else "Create a customer account") }
                 }
             }
 
