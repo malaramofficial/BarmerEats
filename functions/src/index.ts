@@ -1,3 +1,4 @@
+import {createHmac} from "node:crypto";
 import {onCall, HttpsError} from "firebase-functions/v2/https";
 import {defineSecret} from "firebase-functions/params";
 import {initializeApp} from "firebase-admin/app";
@@ -74,13 +75,16 @@ export const createOrder = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "A valid delivery address is required.");
   }
 
+  const restaurantOwnerId = String(restaurant.ownerId ?? "");
+  if (!restaurantOwnerId) throw new HttpsError("failed-precondition", "Restaurant owner is not configured.");
+
   const orderRef = db.collection("orders").doc();
-  const order = {
+  await orderRef.set({
     customerId: request.auth.uid,
     customerName: String(request.auth.token.name ?? "Customer"),
     restaurantId,
     restaurantName: String(restaurant.name ?? "Restaurant"),
-    restaurantOwnerId: String(restaurant.ownerId ?? ""),
+    restaurantOwnerId,
     status: "PLACED",
     paymentMethod,
     paymentStatus: paymentMethod === "COD" ? "COD_PENDING" : "PENDING",
@@ -93,10 +97,8 @@ export const createOrder = onCall(async (request) => {
     items: orderItems,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
-  };
+  });
 
-  if (!order.restaurantOwnerId) throw new HttpsError("failed-precondition", "Restaurant owner is not configured.");
-  await orderRef.set(order);
   return {orderId: orderRef.id, totalAmount, currency: "INR"};
 });
 
@@ -127,5 +129,53 @@ export const createRazorpayOrder = onCall(
 
     await orderSnap.ref.update({razorpayOrderId: paymentOrder.id, updatedAt: FieldValue.serverTimestamp()});
     return {razorpayOrderId: paymentOrder.id, amount: paymentOrder.amount, currency: paymentOrder.currency};
+  }
+);
+
+export const verifyRazorpayPayment = onCall(
+  {secrets: [razorpayKeySecret]},
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Sign in required.");
+
+    const orderId = String(request.data?.orderId ?? "").trim();
+    const razorpayOrderId = String(request.data?.razorpayOrderId ?? "").trim();
+    const razorpayPaymentId = String(request.data?.razorpayPaymentId ?? "").trim();
+    const signature = String(request.data?.signature ?? "").trim();
+    if (!orderId || !razorpayOrderId || !razorpayPaymentId || !signature) {
+      throw new HttpsError("invalid-argument", "Incomplete Razorpay payment response.");
+    }
+
+    const orderRef = db.collection("orders").doc(orderId);
+    const orderSnap = await orderRef.get();
+    if (!orderSnap.exists) throw new HttpsError("not-found", "Order not found.");
+    const order = orderSnap.data()!;
+    if (order.customerId !== request.auth.uid) throw new HttpsError("permission-denied", "Order access denied.");
+
+    if (order.paymentStatus === "PAID") {
+      return {verified: true, idempotent: true};
+    }
+    if (order.razorpayOrderId !== razorpayOrderId) {
+      throw new HttpsError("failed-precondition", "Razorpay order does not match BarmerEats order.");
+    }
+
+    const expected = createHmac("sha256", razorpayKeySecret.value())
+      .update(`${razorpayOrderId}|${razorpayPaymentId}`)
+      .digest("hex");
+    if (expected !== signature) throw new HttpsError("permission-denied", "Payment signature verification failed.");
+
+    await db.runTransaction(async (tx) => {
+      const latest = await tx.get(orderRef);
+      const latestData = latest.data();
+      if (latestData?.paymentStatus !== "PAID") {
+        tx.update(orderRef, {
+          paymentStatus: "PAID",
+          razorpayPaymentId,
+          paymentVerifiedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+    });
+
+    return {verified: true, idempotent: false};
   }
 );
