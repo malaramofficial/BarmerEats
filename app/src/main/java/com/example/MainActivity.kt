@@ -37,6 +37,7 @@ import org.json.JSONObject
 
 class MainActivity : ComponentActivity(), PaymentResultWithDataListener {
     private var paymentViewModel: FoodDeliveryViewModel? = null
+    fun attachPaymentViewModel(viewModel: FoodDeliveryViewModel) { paymentViewModel = viewModel }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,21 +49,12 @@ class MainActivity : ComponentActivity(), PaymentResultWithDataListener {
     override fun onPaymentSuccess(razorpayPaymentId: String?, paymentData: JSONObject?) {
         val orderId = paymentData?.optString("razorpay_order_id").orEmpty()
         val signature = paymentData?.optString("razorpay_signature").orEmpty()
-        if (!razorpayPaymentId.isNullOrBlank() && orderId.isNotBlank() && signature.isNotBlank()) {
-            paymentViewModel?.onPaymentSuccess(razorpayPaymentId, orderId, signature)
-        } else {
-            paymentViewModel?.onPaymentError(-1, "Incomplete payment response")
-        }
+        if (!razorpayPaymentId.isNullOrBlank() && orderId.isNotBlank() && signature.isNotBlank()) paymentViewModel?.onPaymentSuccess(razorpayPaymentId, orderId, signature)
+        else paymentViewModel?.onPaymentError(-1, "Incomplete payment response")
     }
 
-    override fun onPaymentError(code: Int, response: String?) {
-        paymentViewModel?.onPaymentError(code, response ?: "Razorpay payment failed")
-    }
-
-    override fun onDestroy() {
-        paymentViewModel = null
-        super.onDestroy()
-    }
+    override fun onPaymentError(code: Int, response: String?) { paymentViewModel?.onPaymentError(code, response ?: "Razorpay payment failed") }
+    override fun onDestroy() { paymentViewModel = null; super.onDestroy() }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -72,56 +64,35 @@ fun MainOrchestrator() {
     val activity = context as? MainActivity
     val application = context.applicationContext as android.app.Application
     val viewModel: FoodDeliveryViewModel = viewModel(factory = FoodDeliveryViewModelFactory(application))
-    LaunchedEffect(viewModel, activity) { activity?.let { PaymentRepository.attachActivity(it) } }
-    SideEffect { activity?.let { it.paymentViewModel = viewModel } }
-
+    LaunchedEffect(viewModel, activity) { activity?.let { PaymentRepository.attachActivity(it); it.attachPaymentViewModel(viewModel) } }
     val currentRole by viewModel.currentRole.collectAsState()
     val notifications by viewModel.notifications.collectAsState()
     val authState by viewModel.authState.collectAsState()
     var showNotificationsSheet by remember { mutableStateOf(false) }
 
-    if (authState !is AuthState.Authenticated) {
-        LoginScreen(viewModel)
-    } else {
-        Scaffold(
-            topBar = {
-                Column(modifier = Modifier.background(DeepCrimson).statusBarsPadding()) {
-                    Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Box(modifier = Modifier.size(36.dp).background(SandyGold, RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Moped, "BarmerEats", tint = DeepCrimson) }
-                            Column {
-                                Text("BarmerEats", color = SandyGold, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                                Text("Local Food. Local Delivery.", color = SandyGold.copy(alpha = 0.7f), fontSize = 11.sp)
-                            }
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            IconButton(onClick = { viewModel.logoutUser() }, modifier = Modifier.testTag("logout_button")) { Icon(Icons.Default.ExitToApp, "Sign Out", tint = SandyGold) }
-                            IconButton(onClick = { showNotificationsSheet = true }, modifier = Modifier.testTag("notification_bell")) {
-                                BadgedBox(badge = { if (notifications.isNotEmpty()) Badge(containerColor = DesertOrange) { Text(notifications.size.toString(), color = Color.White) } }) { Icon(Icons.Default.Notifications, "Notifications", tint = SandyGold) }
-                            }
-                        }
+    if (authState !is AuthState.Authenticated) LoginScreen(viewModel) else {
+        Scaffold(topBar = {
+            Column(modifier = Modifier.background(DeepCrimson).statusBarsPadding()) {
+                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Box(modifier = Modifier.size(36.dp).background(SandyGold, RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Moped, "BarmerEats", tint = DeepCrimson) }
+                        Column { Text("BarmerEats", color = SandyGold, fontSize = 18.sp, fontWeight = FontWeight.Bold); Text("Local Food. Local Delivery.", color = SandyGold.copy(alpha = 0.7f), fontSize = 11.sp) }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        IconButton(onClick = { viewModel.logoutUser() }, modifier = Modifier.testTag("logout_button")) { Icon(Icons.Default.ExitToApp, "Sign Out", tint = SandyGold) }
+                        IconButton(onClick = { showNotificationsSheet = true }, modifier = Modifier.testTag("notification_bell")) { BadgedBox(badge = { if (notifications.isNotEmpty()) Badge(containerColor = DesertOrange) { Text(notifications.size.toString(), color = Color.White) } }) { Icon(Icons.Default.Notifications, "Notifications", tint = SandyGold) } }
                     }
                 }
             }
-        ) { padding ->
+        }) { padding ->
             Box(modifier = Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
-                when (currentRole) {
-                    "CUSTOMER" -> CustomerApp(viewModel)
-                    "RESTAURANT" -> RestaurantPanel(viewModel)
-                    "RIDER" -> RiderApp(viewModel)
-                    "ADMIN" -> AdminPanel(viewModel)
-                }
-                if (showNotificationsSheet) {
-                    ModalBottomSheet(onDismissRequest = { showNotificationsSheet = false }, containerColor = SandyGold) {
-                        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text("System Notifications", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DeepCrimson)
-                                IconButton(onClick = { showNotificationsSheet = false }) { Icon(Icons.Default.Close, "Close") }
-                            }
-                            Spacer(modifier = Modifier.height(16.dp))
-                            if (notifications.isEmpty()) Box(modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) { Text("No notifications yet.", color = Color.Gray) }
-                            else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) { items(notifications) { notif -> Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) { Text(notif.title, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = DeepCrimson); Spacer(modifier = Modifier.height(4.dp)); Text(notif.message, fontSize = 12.sp, color = CharcoalGray) } } } }
-                        }
+                when (currentRole) { "CUSTOMER" -> CustomerApp(viewModel); "RESTAURANT" -> RestaurantPanel(viewModel); "RIDER" -> RiderApp(viewModel); "ADMIN" -> AdminPanel(viewModel) }
+                if (showNotificationsSheet) ModalBottomSheet(onDismissRequest = { showNotificationsSheet = false }, containerColor = SandyGold) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text("System Notifications", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DeepCrimson); IconButton(onClick = { showNotificationsSheet = false }) { Icon(Icons.Default.Close, "Close") } }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        if (notifications.isEmpty()) Box(modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) { Text("No notifications yet.", color = Color.Gray) }
+                        else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) { items(notifications) { notif -> Card(colors = CardDefaults.cardColors(containerColor = Color.White)) { Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) { Text(notif.title, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = DeepCrimson); Spacer(modifier = Modifier.height(4.dp)); Text(notif.message, fontSize = 12.sp, color = CharcoalGray) } } } }
                     }
                 }
             }
