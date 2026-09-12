@@ -1,15 +1,38 @@
 package com.example.data
 
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
 /** Firestore is the source of truth; Room is the local/offline cache. */
 class FirebaseSyncRepository(private val db: FoodDeliveryDao) {
     private val firestore = FirebaseFirestore.getInstance()
+    private val auth = FirebaseAuth.getInstance()
+    private val scope = CoroutineScope(Dispatchers.IO)
     private var restaurantsListener: ListenerRegistration? = null
     private var ordersListener: ListenerRegistration? = null
     private var notificationsListener: ListenerRegistration? = null
+    private val menuListeners = mutableMapOf<Int, ListenerRegistration>()
+
+    init {
+        startCatalogSync()
+        auth.addAuthStateListener { firebaseAuth ->
+            val uid = firebaseAuth.currentUser?.uid
+            if (uid == null) {
+                ordersListener?.remove(); ordersListener = null
+                notificationsListener?.remove(); notificationsListener = null
+            } else {
+                scope.launch { refreshUser(uid) }
+                startCustomerOrderSync(uid)
+                startNotificationSync(uid)
+            }
+        }
+    }
 
     fun startCatalogSync() {
         restaurantsListener?.remove()
@@ -17,49 +40,52 @@ class FirebaseSyncRepository(private val db: FoodDeliveryDao) {
             .whereEqualTo("approved", true)
             .addSnapshotListener { snapshot, error ->
                 if (error != null || snapshot == null) return@addSnapshotListener
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                scope.launch {
                     snapshot.documents.forEach { doc ->
                         val id = doc.id.toIntOrNull() ?: return@forEach
-                        val restaurant = RestaurantEntity(
-                            id = id,
-                            name = doc.getString("name") ?: return@forEach,
-                            description = doc.getString("description") ?: "",
-                            address = doc.getString("address") ?: "",
-                            cuisineTags = (doc.get("cuisineTags") as? List<*>)?.filterIsInstance<String>()?.joinToString(", ")
-                                ?: doc.getString("cuisineTags") ?: "",
-                            rating = doc.getDouble("rating") ?: 0.0,
-                            isOpen = doc.getBoolean("isOpen") ?: false,
-                            kycStatus = doc.getString("kycStatus") ?: "APPROVED",
-                            bannerImageTag = doc.getString("bannerImageTag") ?: "default"
+                        db.insertRestaurant(
+                            RestaurantEntity(
+                                id = id,
+                                name = doc.getString("name") ?: return@forEach,
+                                description = doc.getString("description") ?: "",
+                                address = doc.getString("address") ?: "",
+                                cuisineTags = (doc.get("cuisineTags") as? List<*>)?.filterIsInstance<String>()?.joinToString(", ")
+                                    ?: doc.getString("cuisineTags") ?: "",
+                                rating = doc.getDouble("rating") ?: 0.0,
+                                isOpen = doc.getBoolean("isOpen") ?: false,
+                                kycStatus = doc.getString("kycStatus") ?: "APPROVED",
+                                bannerImageTag = doc.getString("bannerImageTag") ?: "default"
+                            )
                         )
-                        db.insertRestaurant(restaurant)
                         syncMenu(id, doc.reference)
                     }
                 }
             }
     }
 
-    private fun syncMenu(restaurantId: Int, restaurantRef: com.google.firebase.firestore.DocumentReference) {
-        restaurantRef.collection("menuItems").addSnapshotListener { snapshot, error ->
-            if (error != null || snapshot == null) return@addSnapshotListener
-            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                snapshot.documents.forEach { doc ->
-                    val id = doc.id.toIntOrNull() ?: return@forEach
-                    db.insertMenuItem(
-                        MenuItemEntity(
-                            id = id,
-                            restaurantId = restaurantId,
-                            name = doc.getString("name") ?: return@forEach,
-                            description = doc.getString("description") ?: "",
-                            price = doc.getDouble("price") ?: 0.0,
-                            category = doc.getString("category") ?: "Other",
-                            isAvailable = doc.getBoolean("isAvailable") ?: false,
-                            imageTag = doc.getString("imageTag") ?: "default"
+    private fun syncMenu(restaurantId: Int, restaurantRef: DocumentReference) {
+        menuListeners[restaurantId]?.remove()
+        menuListeners[restaurantId] = restaurantRef.collection("menuItems")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                scope.launch {
+                    snapshot.documents.forEach { doc ->
+                        val id = doc.id.toIntOrNull() ?: return@forEach
+                        db.insertMenuItem(
+                            MenuItemEntity(
+                                id = id,
+                                restaurantId = restaurantId,
+                                name = doc.getString("name") ?: return@forEach,
+                                description = doc.getString("description") ?: "",
+                                price = doc.getDouble("price") ?: 0.0,
+                                category = doc.getString("category") ?: "Other",
+                                isAvailable = doc.getBoolean("isAvailable") ?: false,
+                                imageTag = doc.getString("imageTag") ?: "default"
+                            )
                         )
-                    )
+                    }
                 }
             }
-        }
     }
 
     fun startCustomerOrderSync(uid: String) {
@@ -68,7 +94,7 @@ class FirebaseSyncRepository(private val db: FoodDeliveryDao) {
             .whereEqualTo("customerId", uid)
             .addSnapshotListener { snapshot, error ->
                 if (error != null || snapshot == null) return@addSnapshotListener
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                scope.launch {
                     snapshot.documents.forEach { doc ->
                         val id = doc.id.toIntOrNull() ?: (doc.id.hashCode() and Int.MAX_VALUE)
                         val address = doc.get("deliveryAddress") as? Map<*, *> ?: emptyMap<String, Any>()
@@ -102,7 +128,7 @@ class FirebaseSyncRepository(private val db: FoodDeliveryDao) {
             .whereEqualTo("userId", uid)
             .addSnapshotListener { snapshot, error ->
                 if (error != null || snapshot == null) return@addSnapshotListener
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                scope.launch {
                     snapshot.documents.forEach { doc ->
                         db.insertNotification(
                             NotificationEntity(
@@ -135,11 +161,10 @@ class FirebaseSyncRepository(private val db: FoodDeliveryDao) {
     }
 
     fun stop() {
-        restaurantsListener?.remove()
-        ordersListener?.remove()
-        notificationsListener?.remove()
-        restaurantsListener = null
-        ordersListener = null
-        notificationsListener = null
+        restaurantsListener?.remove(); restaurantsListener = null
+        ordersListener?.remove(); ordersListener = null
+        notificationsListener?.remove(); notificationsListener = null
+        menuListeners.values.forEach { it.remove() }
+        menuListeners.clear()
     }
 }
