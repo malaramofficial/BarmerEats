@@ -9,16 +9,11 @@ initializeApp();
 const db = getFirestore();
 const razorpayKeyId = defineSecret("RAZORPAY_KEY_ID");
 const razorpayKeySecret = defineSecret("RAZORPAY_KEY_SECRET");
-
 const allowedPaymentMethods = new Set(["UPI", "CARD", "COD"]);
 const transitions: Record<string, Set<string>> = {
   PLACED: new Set(["ACCEPTED", "REJECTED", "CANCELLED"]),
-  ACCEPTED: new Set(["PREPARING"]),
-  PREPARING: new Set(["READY"]),
-  READY: new Set(["RIDER_ASSIGNED"]),
-  RIDER_ASSIGNED: new Set(["PICKED_UP"]),
-  PICKED_UP: new Set(["OUT_FOR_DELIVERY"]),
-  OUT_FOR_DELIVERY: new Set(["DELIVERED"]),
+  ACCEPTED: new Set(["PREPARING"]), PREPARING: new Set(["READY"]), READY: new Set(["RIDER_ASSIGNED"]),
+  RIDER_ASSIGNED: new Set(["PICKED_UP"]), PICKED_UP: new Set(["OUT_FOR_DELIVERY"]), OUT_FOR_DELIVERY: new Set(["DELIVERED"]),
 };
 
 async function getRole(uid: string): Promise<string> {
@@ -62,16 +57,16 @@ export const createOrder = onCall(async (request) => {
     subtotal += price * quantity;
     orderItems.push({menuItemId: item.menuItemId, name: String(menuItem.name ?? "Item"), price, quantity});
   }
-
-  const deliveryFee = Number(restaurant.deliveryFee ?? 40);
-  const totalAmount = subtotal + Math.max(0, deliveryFee);
+  const deliveryFee = Math.max(0, Number(restaurant.deliveryFee ?? 40));
+  const taxAmount = Math.round(subtotal * 0.05 * 100) / 100;
+  const totalAmount = subtotal + deliveryFee + taxAmount;
   const address = data.deliveryAddress ?? {};
   if (!address.addressLine || typeof address.lat !== "number" || typeof address.lng !== "number") throw new HttpsError("invalid-argument", "A valid delivery address is required.");
   const restaurantOwnerId = String(restaurant.ownerId ?? "");
   if (!restaurantOwnerId) throw new HttpsError("failed-precondition", "Restaurant owner is not configured.");
 
   const orderRef = db.collection("orders").doc();
-  await orderRef.set({customerId: request.auth.uid, customerName: String(request.auth.token.name ?? "Customer"), restaurantId, restaurantName: String(restaurant.name ?? "Restaurant"), restaurantOwnerId, status: "PLACED", paymentMethod, paymentStatus: paymentMethod === "COD" ? "COD_PENDING" : "PENDING", subtotal, deliveryFee, totalAmount, deliveryAddress: address.addressLine, deliveryLat: address.lat, deliveryLng: address.lng, items: orderItems, createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()});
+  await orderRef.set({customerId: request.auth.uid, customerName: String(request.auth.token.name ?? "Customer"), restaurantId, restaurantName: String(restaurant.name ?? "Restaurant"), restaurantOwnerId, status: "PLACED", paymentMethod, paymentStatus: paymentMethod === "COD" ? "COD_PENDING" : "PENDING", subtotal, deliveryFee, taxAmount, totalAmount, deliveryAddress: address.addressLine, deliveryLat: address.lat, deliveryLng: address.lng, items: orderItems, createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()});
   return {orderId: orderRef.id, totalAmount, currency: "INR"};
 });
 
@@ -86,14 +81,12 @@ export const transitionOrder = onCall(async (request) => {
   const order = orderSnap.data()!;
   const currentStatus = String(order.status ?? "");
   if (!transitions[currentStatus]?.has(nextStatus)) throw new HttpsError("failed-precondition", `Invalid transition ${currentStatus} -> ${nextStatus}.`);
-
   const role = await getRole(request.auth.uid);
   const uid = request.auth.uid;
   const customerAction = nextStatus === "CANCELLED" && role === "CUSTOMER" && order.customerId === uid;
   const restaurantAction = ["ACCEPTED", "REJECTED", "PREPARING", "READY"].includes(nextStatus) && role === "RESTAURANT" && order.restaurantOwnerId === uid;
   const riderAction = ["RIDER_ASSIGNED", "PICKED_UP", "OUT_FOR_DELIVERY", "DELIVERED"].includes(nextStatus) && role === "RIDER" && (order.riderId === uid || nextStatus === "RIDER_ASSIGNED");
   if (!customerAction && !restaurantAction && !riderAction && role !== "ADMIN") throw new HttpsError("permission-denied", "You are not allowed to perform this order transition.");
-
   const update: Record<string, unknown> = {status: nextStatus, updatedAt: FieldValue.serverTimestamp()};
   if (nextStatus === "RIDER_ASSIGNED") {
     const riderId = String(request.data?.riderId ?? "").trim();
@@ -119,7 +112,7 @@ export const createRazorpayOrder = onCall({secrets: [razorpayKeyId, razorpayKeyS
   const razorpay = new Razorpay({key_id: razorpayKeyId.value(), key_secret: razorpayKeySecret.value()});
   const paymentOrder = await razorpay.orders.create({amount: Math.round(amount * 100), currency: "INR", receipt: orderId, notes: {barmerEatsOrderId: orderId, customerId: request.auth.uid}});
   await orderSnap.ref.update({razorpayOrderId: paymentOrder.id, updatedAt: FieldValue.serverTimestamp()});
-  return {razorpayOrderId: paymentOrder.id, amount: paymentOrder.amount, currency: paymentOrder.currency};
+  return {razorpayOrderId: paymentOrder.id, amount: paymentOrder.amount, currency: paymentOrder.currency, keyId: razorpayKeyId.value()};
 });
 
 export const verifyRazorpayPayment = onCall({secrets: [razorpayKeySecret]}, async (request) => {
