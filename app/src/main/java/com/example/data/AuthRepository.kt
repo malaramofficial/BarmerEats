@@ -29,80 +29,50 @@ class AuthRepository(private val context: Context, private val localDao: FoodDel
                 firestore = FirebaseFirestore.getInstance()
                 _isFirebaseConfigured.value = true
                 Log.d("AuthRepository", "Firebase initialized")
-            } else {
-                Log.w("AuthRepository", "Firebase is not configured")
-            }
-        } catch (e: Exception) {
-            Log.e("AuthRepository", "Firebase initialization error", e)
-        }
+            } else Log.w("AuthRepository", "Firebase is not configured")
+        } catch (e: Exception) { Log.e("AuthRepository", "Firebase initialization error", e) }
     }
 
     suspend fun signIn(email: String, password: String): AuthResult {
         val auth = firebaseAuth ?: return AuthResult.Error("Firebase Authentication is not configured.")
         val db = firestore ?: return AuthResult.Error("Firebase Firestore is not configured.")
         if (!_isFirebaseConfigured.value) return AuthResult.Error("Firebase Authentication is unavailable.")
-
         return try {
             val result = auth.signInWithEmailAndPassword(email.trim(), password).await()
             val uid = result.user?.uid ?: return AuthResult.Error("Authentication returned no user.")
             val doc = db.collection("users").document(uid).get().await()
-            if (!doc.exists()) {
-                auth.signOut()
-                return AuthResult.Error("Your account profile was not found. Contact BarmerEats support.")
-            }
-
+            if (!doc.exists()) { auth.signOut(); return AuthResult.Error("Your account profile was not found. Contact BarmerEats support.") }
             val role = doc.getString("role")?.uppercase()
-            if (role !in setOf("CUSTOMER", "RESTAURANT", "RIDER", "ADMIN")) {
-                auth.signOut()
-                return AuthResult.Error("Your account has an invalid role configuration.")
-            }
-
+            val validRoles = setOf("CUSTOMER", "RESTAURANT", "RIDER", "ADMIN")
+            if (role !in validRoles) { auth.signOut(); return AuthResult.Error("Your account has an invalid role configuration.") }
+            val trustedRole = role ?: return AuthResult.Error("Your account role is missing.")
             val user = UserEntity(
                 id = uid,
                 name = doc.getString("name") ?: result.user?.displayName ?: "User",
                 email = result.user?.email ?: email.trim(),
                 phone = doc.getString("phone") ?: result.user?.phoneNumber.orEmpty(),
-                role = role
+                role = trustedRole
             )
             localDao.insertUser(user)
             AuthResult.Success(user)
-        } catch (e: FirebaseAuthInvalidCredentialsException) {
-            AuthResult.Error("Invalid email or password.")
-        } catch (e: Exception) {
-            AuthResult.Error(e.localizedMessage ?: "Unable to sign in.")
-        }
+        } catch (e: FirebaseAuthInvalidCredentialsException) { AuthResult.Error("Invalid email or password.") }
+        catch (e: Exception) { AuthResult.Error(e.localizedMessage ?: "Unable to sign in.") }
     }
 
     suspend fun signUp(email: String, password: String, name: String, phone: String, role: String): AuthResult {
         val auth = firebaseAuth ?: return AuthResult.Error("Firebase Authentication is not configured.")
         val db = firestore ?: return AuthResult.Error("Firebase Firestore is not configured.")
         if (!_isFirebaseConfigured.value) return AuthResult.Error("Firebase Authentication is unavailable.")
-
         return try {
-            // Public self-registration is CUSTOMER only. Restaurant/Rider/Admin accounts
-            // must be provisioned by an authorized backend/admin workflow.
             val sanitizedRole = "CUSTOMER"
             val result = auth.createUserWithEmailAndPassword(email.trim(), password).await()
             val uid = result.user?.uid ?: return AuthResult.Error("Registration returned no user.")
             val user = UserEntity(uid, name.trim(), email.trim(), phone.trim(), sanitizedRole)
-
-            db.collection("users").document(uid).set(
-                mapOf(
-                    "id" to uid,
-                    "name" to user.name,
-                    "email" to user.email,
-                    "phone" to user.phone,
-                    "role" to sanitizedRole,
-                    "createdAt" to System.currentTimeMillis()
-                )
-            ).await()
+            db.collection("users").document(uid).set(mapOf("id" to uid, "name" to user.name, "email" to user.email, "phone" to user.phone, "role" to sanitizedRole, "createdAt" to System.currentTimeMillis())).await()
             localDao.insertUser(user)
             AuthResult.Success(user)
-        } catch (e: FirebaseAuthUserCollisionException) {
-            AuthResult.Error("This email is already registered on BarmerEats.")
-        } catch (e: Exception) {
-            AuthResult.Error(e.localizedMessage ?: "Failed to create account.")
-        }
+        } catch (e: FirebaseAuthUserCollisionException) { AuthResult.Error("This email is already registered on BarmerEats.") }
+        catch (e: Exception) { AuthResult.Error(e.localizedMessage ?: "Failed to create account.") }
     }
 
     fun signOut() { firebaseAuth?.signOut() }
