@@ -18,6 +18,11 @@ service cloud.firestore {
         && request.resource.data.role == resource.data.role
       );
       allow delete: if admin();
+
+      match /devices/{deviceId} {
+        allow read: if self(userId) || admin();
+        allow create, update, delete: if self(userId) || admin();
+      }
     }
 
     match /restaurants/{restaurantId} {
@@ -52,12 +57,8 @@ service cloud.firestore {
         || resource.data.riderId == request.auth.uid
       ));
 
-      allow create: if signedIn()
-        && request.resource.data.customerId == request.auth.uid
-        && request.resource.data.status == 'PLACED'
-        && request.resource.data.paymentStatus == 'PENDING'
-        && request.resource.data.totalAmount >= 0
-        && request.resource.data.restaurantOwnerId is string;
+      // Orders are created only by the trusted createOrder callable (Admin SDK).
+      allow create: if false;
 
       allow update: if admin() || (
         signedIn()
@@ -78,8 +79,7 @@ service cloud.firestore {
           ))
           ||
           (resource.data.riderId == request.auth.uid && (
-            (resource.data.status == 'READY' && request.resource.data.status == 'RIDER_ASSIGNED')
-            || (resource.data.status == 'RIDER_ASSIGNED' && request.resource.data.status == 'PICKED_UP')
+            (resource.data.status == 'RIDER_ASSIGNED' && request.resource.data.status == 'PICKED_UP')
             || (resource.data.status == 'PICKED_UP' && request.resource.data.status == 'OUT_FOR_DELIVERY')
             || (resource.data.status == 'OUT_FOR_DELIVERY' && request.resource.data.status == 'DELIVERED')
           ))
@@ -113,6 +113,10 @@ service cloud.firestore {
     match /payments/{paymentId} {
       allow read: if admin() || (signedIn() && resource.data.customerId == request.auth.uid);
       allow write: if admin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
