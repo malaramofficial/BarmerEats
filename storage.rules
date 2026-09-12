@@ -1,0 +1,38 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function isAdmin() {
+      return signedIn()
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'ADMIN';
+    }
+
+    match /restaurantImages/{restaurantId}/{fileName} {
+      allow read: if true;
+      allow write: if isAdmin()
+        || (signedIn()
+          && firestore.get(/databases/(default)/documents/restaurants/$(restaurantId)).data.ownerId == request.auth.uid);
+    }
+
+    match /menuImages/{restaurantId}/{fileName} {
+      allow read: if true;
+      allow write: if isAdmin()
+        || (signedIn()
+          && firestore.get(/databases/(default)/documents/restaurants/$(restaurantId)).data.ownerId == request.auth.uid);
+    }
+
+    match /kycDocuments/{userId}/{fileName} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow write: if isAdmin() || (signedIn() && request.auth.uid == userId);
+    }
+
+    match /userUploads/{userId}/{fileName} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow write: if signedIn() && request.auth.uid == userId;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
