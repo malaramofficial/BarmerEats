@@ -1,0 +1,6 @@
+{
+  "name": "Barmer Food",
+  "description": "An interactive multi-role simulation food delivery app serving Barmer, Rajasthan.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
