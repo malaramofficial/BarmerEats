@@ -46,23 +46,23 @@ class AuthRepository(private val context: Context, private val localDao: FoodDel
             val result = auth.signInWithEmailAndPassword(email.trim(), password).await()
             val uid = result.user?.uid ?: return AuthResult.Error("Authentication returned no user.")
             val doc = db.collection("users").document(uid).get().await()
-
             if (!doc.exists()) {
                 auth.signOut()
                 return AuthResult.Error("Your account profile was not found. Contact BarmerEats support.")
             }
 
-            val role = doc.getString("role")?.uppercase() ?: "CUSTOMER"
-            val safeRole = when (role) {
-                "CUSTOMER", "RESTAURANT", "RIDER", "ADMIN" -> role
-                else -> "CUSTOMER"
+            val role = doc.getString("role")?.uppercase()
+            if (role !in setOf("CUSTOMER", "RESTAURANT", "RIDER", "ADMIN")) {
+                auth.signOut()
+                return AuthResult.Error("Your account has an invalid role configuration.")
             }
+
             val user = UserEntity(
                 id = uid,
                 name = doc.getString("name") ?: result.user?.displayName ?: "User",
                 email = result.user?.email ?: email.trim(),
                 phone = doc.getString("phone") ?: result.user?.phoneNumber.orEmpty(),
-                role = safeRole
+                role = role
             )
             localDao.insertUser(user)
             AuthResult.Success(user)
@@ -79,14 +79,13 @@ class AuthRepository(private val context: Context, private val localDao: FoodDel
         if (!_isFirebaseConfigured.value) return AuthResult.Error("Firebase Authentication is unavailable.")
 
         return try {
-            val sanitizedRole = when (role.uppercase()) {
-                "RESTAURANT", "RIDER" -> role.uppercase()
-                else -> "CUSTOMER"
-            }
+            // Public self-registration is CUSTOMER only. Restaurant/Rider/Admin accounts
+            // must be provisioned by an authorized backend/admin workflow.
+            val sanitizedRole = "CUSTOMER"
             val result = auth.createUserWithEmailAndPassword(email.trim(), password).await()
             val uid = result.user?.uid ?: return AuthResult.Error("Registration returned no user.")
-
             val user = UserEntity(uid, name.trim(), email.trim(), phone.trim(), sanitizedRole)
+
             db.collection("users").document(uid).set(
                 mapOf(
                     "id" to uid,
@@ -106,7 +105,5 @@ class AuthRepository(private val context: Context, private val localDao: FoodDel
         }
     }
 
-    fun signOut() {
-        firebaseAuth?.signOut()
-    }
+    fun signOut() { firebaseAuth?.signOut() }
 }
