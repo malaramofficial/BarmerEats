@@ -6,11 +6,13 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,7 +29,13 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Compile debug APK
+      - name: Run lint
+        run: gradle :app:lintDebug --stacktrace
+
+      - name: Run unit tests
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Upload debug APK
@@ -36,3 +44,11 @@ jobs:
           name: BarmerEats-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BarmerEats-lint-report
+          path: app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
