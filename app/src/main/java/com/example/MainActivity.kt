@@ -32,8 +32,8 @@ import com.example.ui.rider.RiderApp
 import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.FoodDeliveryViewModel
 import com.example.viewmodel.FoodDeliveryViewModelFactory
+import com.razorpay.PaymentData
 import com.razorpay.PaymentResultWithDataListener
-import org.json.JSONObject
 
 class MainActivity : ComponentActivity(), PaymentResultWithDataListener {
     private var paymentViewModel: FoodDeliveryViewModel? = null
@@ -46,14 +46,18 @@ class MainActivity : ComponentActivity(), PaymentResultWithDataListener {
         setContent { MyApplicationTheme { MainOrchestrator() } }
     }
 
-    override fun onPaymentSuccess(razorpayPaymentId: String?, paymentData: JSONObject?) {
-        val orderId = paymentData?.optString("razorpay_order_id").orEmpty()
-        val signature = paymentData?.optString("razorpay_signature").orEmpty()
-        if (!razorpayPaymentId.isNullOrBlank() && orderId.isNotBlank() && signature.isNotBlank()) paymentViewModel?.onPaymentSuccess(razorpayPaymentId, orderId, signature)
-        else paymentViewModel?.onPaymentError(-1, "Incomplete payment response")
+    override fun onPaymentSuccess(razorpayPaymentId: String?, paymentData: PaymentData?) {
+        val orderId = paymentData?.orderId.orEmpty()
+        val signature = paymentData?.signature.orEmpty()
+        if (!razorpayPaymentId.isNullOrBlank() && orderId.isNotBlank() && signature.isNotBlank()) {
+            paymentViewModel?.onPaymentSuccess(razorpayPaymentId, orderId, signature)
+        } else paymentViewModel?.onPaymentError(-1, "Incomplete payment response")
     }
 
-    override fun onPaymentError(code: Int, response: String?) { paymentViewModel?.onPaymentError(code, response ?: "Razorpay payment failed") }
+    override fun onPaymentError(code: Int, response: String?, paymentData: PaymentData?) {
+        paymentViewModel?.onPaymentError(code, response ?: "Razorpay payment failed")
+    }
+
     override fun onDestroy() { paymentViewModel = null; super.onDestroy() }
 }
 
