@@ -1,0 +1,36 @@
+name: Firebase Functions Build
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'functions/**'
+      - '.github/workflows/functions-build.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'functions/**'
+      - '.github/workflows/functions-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: functions
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: TypeScript build
+        run: npm run build
